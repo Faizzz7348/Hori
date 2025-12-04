@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -10,6 +10,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Upload } from "lucide-react";
 import { z } from "zod";
 
 const imageSchema = z.object({
@@ -31,6 +33,10 @@ export function AddImageDialog({ open, onOpenChange, onSubmit, isLoading = false
   const [subtitle, setSubtitle] = useState("");
   const [errors, setErrors] = useState<{ url?: string; title?: string }>({});
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [uploadMode, setUploadMode] = useState<"url" | "file">("url");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Reset form when dialog closes (transitions from open to closed)
   useEffect(() => {
@@ -40,6 +46,9 @@ export function AddImageDialog({ open, onOpenChange, onSubmit, isLoading = false
       setSubtitle("");
       setPreviewUrl(null);
       setErrors({});
+      setSelectedFile(null);
+      setUploadMode("url");
+      setUploading(false);
     }
   }, [open, isLoading]);
 
@@ -54,9 +63,62 @@ export function AddImageDialog({ open, onOpenChange, onSubmit, isLoading = false
     }
   };
 
-  const handleSubmit = () => {
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      // Create preview URL for the selected file
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setPreviewUrl(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+      setErrors({});
+    }
+  };
+
+  const handleUploadFile = async () => {
+    if (!selectedFile) {
+      setErrors({ url: "Please select a file" });
+      return null;
+    }
+
+    setUploading(true);
     try {
-      const data = imageSchema.parse({ url, title, subtitle: subtitle || undefined });
+      const formData = new FormData();
+      formData.append('image', selectedFile);
+
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error('Upload failed');
+      }
+
+      const data = await response.json();
+      return data.url;
+    } catch (error) {
+      setErrors({ url: "Failed to upload image" });
+      return null;
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    let imageUrl = url;
+
+    // If file upload mode, upload the file first
+    if (uploadMode === "file") {
+      const uploadedUrl = await handleUploadFile();
+      if (!uploadedUrl) return;
+      imageUrl = uploadedUrl;
+    }
+
+    try {
+      const data = imageSchema.parse({ url: imageUrl, title, subtitle: subtitle || undefined });
       onSubmit(data);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -84,21 +146,62 @@ export function AddImageDialog({ open, onOpenChange, onSubmit, isLoading = false
         <DialogHeader>
           <DialogTitle>Add New Image</DialogTitle>
           <DialogDescription>
-            Enter the image URL and details to add it to the gallery.
+            Upload an image file or enter an image URL to add it to the gallery.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">
-          <div className="space-y-2">
-            <Label htmlFor="url">Image URL</Label>
-            <Input
-              id="url"
-              placeholder="https://example.com/image.jpg"
-              value={url}
-              onChange={(e) => handleUrlChange(e.target.value)}
-              data-testid="input-image-url"
-            />
-            {errors.url && <p className="text-sm text-destructive">{errors.url}</p>}
-          </div>
+          <Tabs value={uploadMode} onValueChange={(value) => setUploadMode(value as "url" | "file")}>
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="url">Image URL</TabsTrigger>
+              <TabsTrigger value="file">Upload File</TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="url" className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="url">Image URL</Label>
+                <Input
+                  id="url"
+                  placeholder="https://example.com/image.jpg"
+                  value={url}
+                  onChange={(e) => handleUrlChange(e.target.value)}
+                  data-testid="input-image-url"
+                />
+                {errors.url && <p className="text-sm text-destructive">{errors.url}</p>}
+              </div>
+            </TabsContent>
+            
+            <TabsContent value="file" className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="file">Choose Image File</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="file"
+                    type="file"
+                    accept="image/*"
+                    onChange={handleFileChange}
+                    ref={fileInputRef}
+                    className="cursor-pointer"
+                    data-testid="input-image-file"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="shrink-0"
+                  >
+                    <Upload className="w-4 h-4 mr-2" />
+                    Browse
+                  </Button>
+                </div>
+                {selectedFile && (
+                  <p className="text-sm text-muted-foreground">
+                    Selected: {selectedFile.name} ({(selectedFile.size / 1024 / 1024).toFixed(2)} MB)
+                  </p>
+                )}
+                {errors.url && <p className="text-sm text-destructive">{errors.url}</p>}
+              </div>
+            </TabsContent>
+          </Tabs>
 
           {previewUrl && (
             <div className="space-y-2">
@@ -139,11 +242,11 @@ export function AddImageDialog({ open, onOpenChange, onSubmit, isLoading = false
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => handleOpenChange(false)} disabled={isLoading} data-testid="button-cancel">
+          <Button variant="outline" onClick={() => handleOpenChange(false)} disabled={isLoading || uploading} data-testid="button-cancel">
             Cancel
           </Button>
-          <Button onClick={handleSubmit} disabled={isLoading} data-testid="button-submit-image">
-            {isLoading ? "Adding..." : "Add Image"}
+          <Button onClick={handleSubmit} disabled={isLoading || uploading} data-testid="button-submit-image">
+            {uploading ? "Uploading..." : isLoading ? "Adding..." : "Add Image"}
           </Button>
         </DialogFooter>
       </DialogContent>

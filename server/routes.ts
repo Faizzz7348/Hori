@@ -1,11 +1,79 @@
 import type { Express } from "express";
+import express from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertPageSchema, insertRowSchema, insertImageSchema, updatePageSchema, updateRowSchema, updateImageSchema, insertShareLinkSchema } from "@shared/schema";
 import { z } from "zod";
 import { randomBytes } from "crypto";
+import multer from "multer";
+import FormData from "form-data";
+import fetch from "node-fetch";
+
+// Configure multer for memory storage (we'll upload to ImgBB)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|gif|webp|bmp/;
+    const extname = allowedTypes.test(file.originalname.toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    
+    if (mimetype && extname) {
+      return cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed!'));
+    }
+  }
+});
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Upload image to ImgBB
+  app.post("/api/upload", upload.single('image'), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+
+      const apiKey = process.env.IMGBB_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({ error: "ImgBB API key not configured" });
+      }
+
+      // Convert buffer to base64
+      const base64Image = req.file.buffer.toString('base64');
+
+      // Create form data for ImgBB API
+      const formData = new FormData();
+      formData.append('image', base64Image);
+
+      // Upload to ImgBB
+      const response = await fetch(`https://api.imgbb.com/1/upload?key=${apiKey}`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to upload to ImgBB');
+      }
+
+      const data = await response.json() as any;
+      
+      // Return the ImgBB URL
+      res.json({ 
+        url: data.data.url,
+        display_url: data.data.display_url,
+        thumb_url: data.data.thumb.url,
+        medium_url: data.data.medium?.url,
+        delete_url: data.data.delete_url
+      });
+    } catch (error) {
+      console.error('Upload error:', error);
+      res.status(500).json({ error: "Failed to upload image" });
+    }
+  });
+
   // Pages routes
   app.get("/api/pages", async (req, res) => {
     try {
