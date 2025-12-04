@@ -6,8 +6,6 @@ import { insertPageSchema, insertRowSchema, insertImageSchema, updatePageSchema,
 import { z } from "zod";
 import { randomBytes } from "crypto";
 import multer from "multer";
-import FormData from "form-data";
-import fetch from "node-fetch";
 
 // Configure multer for memory storage (we'll upload to ImgBB)
 const upload = multer({
@@ -44,11 +42,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Convert buffer to base64
       const base64Image = req.file.buffer.toString('base64');
 
-      // Create form data for ImgBB API
-      const formData = new FormData();
+      // Create URLSearchParams for form data
+      const formData = new URLSearchParams();
       formData.append('image', base64Image);
 
-      // Upload to ImgBB
+      // Upload to ImgBB using fetch
       const response = await fetch(`https://api.imgbb.com/1/upload?key=${apiKey}`, {
         method: 'POST',
         body: formData,
